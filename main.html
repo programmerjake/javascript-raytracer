@@ -1,0 +1,779 @@
+<html><head><title>JavaScript Raytracer</title>
+<style>
+body
+{
+	margin:0;
+	padding:0;
+}
+html
+{
+	margin:0;
+	padding:0;
+}
+canvas
+{
+	margin:0;
+	padding:0;
+}
+</style>
+<script>
+<!--
+function dumpObj(o, n)
+{
+	document.writeln("<h1>" + n + " = " + o + "</h1><br/" + ">");
+	for(i in o)
+	{
+		document.writeln(i + " = " + o[i] + "<br/" + ">");
+	}
+}
+var hexDigitArray = new Array();
+var i;
+for(i=0;i<10;i++)
+hexDigitArray[i]=''+i;
+hexDigitArray[10]='A';
+hexDigitArray[11]='B';
+hexDigitArray[12]='C';
+hexDigitArray[13]='D';
+hexDigitArray[14]='E';
+hexDigitArray[15]='F';
+
+function getHexDigit(v)
+{
+	return hexDigitArray[v];
+}
+function toByte(v)
+{
+	v=(v*255)%256;
+	var x=v%16;
+	return hexDigitArray[(v-x)/16]+hexDigitArray[x-x%1];
+}
+function rgb(r, g, b)
+{
+	return '#'+toByte(r)+toByte(g)+toByte(b);
+}
+
+function Vector(x,y,z)
+{
+	if(x instanceof Vector)
+	{
+		this.x=x.x;
+		this.y=x.y;
+		this.z=x.z;
+		return;
+	}
+	this.x=x;
+	this.y=y;
+	this.z=z;
+}
+
+Vector.prototype = {
+add:function(rt)
+{
+	this.x+=rt.x;
+	this.y+=rt.y;
+	this.z+=rt.z;
+	return this;
+}, 
+sub:function(rt)
+{
+	this.x-=rt.x;
+	this.y-=rt.y;
+	this.z-=rt.z;
+	return this;
+}, 
+mul:function(rt)
+{
+	this.x*=rt;
+	this.y*=rt;
+	this.z*=rt;
+	return this;
+}, 
+div:function(rt)
+{
+	this.x/=rt;
+	this.y/=rt;
+	this.z/=rt;
+	return this;
+}, 
+abs:function()
+{
+	return Math.sqrt(this.x*this.x+this.y*this.y+this.z*this.z);
+},
+dot:function(rt)
+{
+	return this.x*rt.x+this.y*rt.y+this.z*rt.z;
+},
+cross:function(rt)
+{
+	var x = this.y*rt.z-this.z*rt.y;
+	var y = this.z*rt.x-this.x*rt.z;
+	var z = this.x*rt.y-this.y*rt.x;
+	this.x=x;
+	this.y=y;
+	this.z=z;
+	return this;
+},
+normalize:function()
+{
+	var r=this.abs();
+	if(r==0) r=1;
+	return this.div(r);
+},
+reflect:function(normal)
+{
+	var t = this.dot(normal);
+	this.x -= 2 * normal.x * t;
+	this.y -= 2 * normal.y * t;
+	this.z -= 2 * normal.z * t;
+	return this;
+},
+};
+
+function Color(r, g, b)
+{
+	if(r instanceof Color)
+	{
+		this.r=r.r;
+		this.g=r.g;
+		this.b=r.b;
+		return;
+	}
+	this.r=r;
+	this.g=g;
+	this.b=b;
+}
+
+Color.prototype = {
+add:function(rt)
+{
+	this.r+=rt.r;
+	this.g+=rt.g;
+	this.b+=rt.b;
+	return this;
+},
+sub:function(rt)
+{
+	this.r-=rt.r;
+	this.g-=rt.g;
+	this.b-=rt.b;
+	return this;
+}, 
+mul:function(rt)
+{
+	this.r*=rt.r;
+	this.g*=rt.g;
+	this.b*=rt.b;
+	return this;
+},
+scale:function(rt)
+{
+	this.r*=rt;
+	this.g*=rt;
+	this.b*=rt;
+	return this;
+},
+toHTMLColor:function()
+{
+	var r = this.r;
+	var g=this.g;
+	var b=this.b;
+	if(r<0) r=0;else if(r>1) r=1;
+	if(g<0) g=0;else if(g>1) g=1;
+	if(b<0) b=0;else if(b>1) b=1;
+	return rgb(r,g,b);
+}, 
+writeToImageData:function(x, y, imgData)
+{
+	x = Math.round(x);
+	y = Math.round(y);
+	if(x < 0 || x >= imgData.width || y < 0 || y >= imgData.height)
+		return;
+	var i = 4 * (x + imgData.width * y);
+	var r = Math.floor(this.r * 256);
+	var g = Math.floor(this.g * 256);
+	var b = Math.floor(this.b * 256);
+	if(r<0) r=0;else if(r>255) r=255;
+	if(g<0) g=0;else if(g>255) g=255;
+	if(b<0) b=0;else if(b>255) b=255;
+	imgData.data[i++] = r;
+	imgData.data[i++] = g;
+	imgData.data[i++] = b;
+	imgData.data[i] = 255;
+},
+difference:function(c)
+{
+	return Math.abs(0.299*(this.r-c.r))+Math.abs(0.587*(this.g-c.g))+Math.abs(0.114*(this.b-c.b));
+},
+};
+
+var eps=1e-2, maxDist=1e10;
+
+function PointLight(p, c)
+{
+	this.p=p;
+	this.c=c;
+}
+
+PointLight.prototype = {
+getLightColor:function(world, origin, viewDir, normal, material)
+{
+	var dir = new Vector(this.p).sub(origin);
+	var r = dir.abs();
+	if(r < eps)
+		return new Color(1e10, 1e10, 1e10).mul(this.c);
+	dir.div(r);
+	var i, spans = world.intersect(origin, dir);
+	for(i=0;i<spans.length;i++)
+	{
+		if(spans[i].start >= r - eps)
+			break;
+		if(spans[i].start >= eps)
+			return new Color(0, 0, 0);
+		if(spans[i].end >= r-eps)
+			break;
+		if(spans[i].end >= eps)
+			return new Color(0, 0, 0);
+	}
+	var dot = dir.dot(normal);
+	var c = new Color(0, 0, 0);
+	if(dot > 0)		
+		c.add(new Color(this.c).scale(dot).mul(material.diffuse));
+	dot = new Vector(viewDir).reflect(normal).dot(dir);
+	if(dot > 0)
+		c.add(new Color(this.c).scale(Math.pow(dot, material.specularPower)).mul(material.specular));
+	c.scale(1/(r*r));
+	return c;
+}
+};
+
+function DirectionalLight(p, c)
+{
+	this.p=p;
+	this.c=c;
+}
+
+DirectionalLight.prototype = {
+getLightColor:function(world, origin, viewDir, normal, material)
+{
+	var dir = new Vector(this.p).mul(-1);
+	var i, spans = world.intersect(origin, dir);
+	for(i=0;i<spans.length;i++)
+	{
+		if(spans[i].start >= maxDist)
+			break;
+		if(spans[i].start >= eps)
+			return new Color(0, 0, 0);
+		if(spans[i].end >= maxDist)
+			break;
+		if(spans[i].end >= eps)
+			return new Color(0, 0, 0);
+	}
+	var dot = dir.dot(normal);
+	var c = new Color(0, 0, 0);
+	if(dot > 0)		
+		c.add(new Color(this.c).scale(dot).mul(material.diffuse));
+	dot = new Vector(viewDir).reflect(normal).dot(dir);
+	if(dot > 0)
+		c.add(new Color(this.c).scale(Math.pow(dot, material.specularPower)).mul(material.specular));
+	return c;
+}
+};
+
+function Span(start, end)
+{
+	this.start=start;
+	this.end=end;
+}
+
+Span.prototype = {
+intersects:function(rt)
+{
+	if(this.start > rt.end)
+		return false;
+	if(this.end < rt.start)
+		return false;
+	return true;
+}
+};
+
+function Material(ambient, diffuse, specular, specularPower, reflection)
+{
+	this.ambient = ambient;
+	this.diffuse = diffuse;
+	this.specular = specular;
+	this.specularPower = specularPower;
+	this.reflection = reflection;
+}
+
+function Plane(v, d, m)
+{
+	this.v=v;
+	this.d=d;
+	this.m = m;
+}
+
+/*   -d-v*origin=v * dir*t
+*/
+
+Plane.prototype = {
+intersect:function(origin, dir)
+{
+	var divisor = this.v.dot(dir);
+	var numerator = this.v.dot(origin)+this.d;
+	if(Math.abs(divisor) < eps)
+	{
+		if(this.getDistanceFromSurface(origin) < -eps)
+			return [new Span(-maxDist,maxDist)];
+		return [];
+	}
+	else if(this.getDistanceFromSurface(origin) * this.v.dot(dir) < -eps)
+		return [new Span(numerator/divisor, maxDist)];
+	return [new Span(-maxDist,numerator/divisor)];
+},
+getMaterial:function(p)
+{
+	return this.m;
+},
+getNormal:function(p)
+{
+	return this.v;
+},
+getDistanceFromSurface:function(p)
+{
+	return this.v.dot(p)-this.d;
+},
+};
+
+function Sphere(c, r, m)
+{
+	this.c=c;
+	this.r=r;
+	this.r_sq = r*r;
+	this.m = m;
+}
+
+Sphere.prototype = {
+intersect:function(origin, dir)
+{
+	var offset = new Vector(origin).sub(this.c);
+	var dir_dot_offset = dir.dot(offset);
+	var a = 1;
+	var b = 2 * dir_dot_offset;
+	var c = offset.dot(offset) - this.r_sq;
+	var sqrtArg = b * b - 4 * a * c;
+	if(sqrtArg < eps)
+		return [];
+	var d = Math.sqrt(sqrtArg);
+	var t1 = (-b - d) / 2;
+	var t2 = (-b + d) / 2;
+	if(t1 > t2)
+		return [new Span(t2, t1)];
+	return [new Span(t1, t2)];
+},
+getMaterial:function(p)
+{
+	return this.m;
+},
+getNormal:function(p)
+{
+	return new Vector(p).sub(this.c).normalize();
+},
+getDistanceFromSurface:function(p)
+{
+	return new Vector(p).sub(this.c).abs() - this.r;
+},
+};
+
+function Union(a, b)
+{
+	this.a = a;
+	this.b = b;
+}
+
+Union.prototype = {
+intersect:function(origin, dir)
+{
+	var aSpans = this.a.intersect(origin, dir);
+	var bSpans = this.b.intersect(origin, dir);
+	var retval = [];
+	var aIndex = 0, bIndex = 0;
+	while(aIndex < aSpans.length && bIndex < bSpans.length)
+	{		
+		if(aSpans[aIndex].end < bSpans[bIndex].start) // if a is completely before b
+		{
+			retval.push(aSpans[aIndex++]);
+			continue;
+		}
+		if(bSpans[bIndex].end < aSpans[aIndex].start) // if b is completely before a
+		{
+			retval.push(bSpans[bIndex++]);
+			continue;
+		}
+		var start = Math.min(aSpans[aIndex].start, bSpans[bIndex].start);
+		var end = Math.max(aSpans[aIndex].end, bSpans[bIndex].end);
+		bIndex++;
+		aSpans[aIndex].start = start;
+		aSpans[aIndex].end = end;
+	}
+	while(aIndex < aSpans.length)
+	{
+		retval.push(aSpans[aIndex++]);
+	}
+	while(bIndex < bSpans.length)
+	{
+		retval.push(bSpans[bIndex++]);
+	}
+	return retval;
+},
+getMaterial:function(p)
+{
+	if(Math.abs(this.a.getDistanceFromSurface(p)) > Math.abs(this.b.getDistanceFromSurface(p)))
+		return this.b.getMaterial(p);
+	return this.a.getMaterial(p);
+},
+getNormal:function(p)
+{
+	if(Math.abs(this.a.getDistanceFromSurface(p)) > Math.abs(this.b.getDistanceFromSurface(p)))
+		return this.b.getNormal(p);
+	return this.a.getNormal(p);
+},
+getDistanceFromSurface:function(p)
+{
+	var aDist = this.a.getDistanceFromSurface(p);
+	var bDist = this.b.getDistanceFromSurface(p);
+	if(Math.abs(aDist) > Math.abs(bDist))
+		return bDist;
+	return aDist;
+},
+};
+
+function Intersection(a, b)
+{
+	this.a = a;
+	this.b = b;
+}
+
+Intersection.prototype = {
+intersect:function(origin, dir)
+{
+	var aSpans = this.a.intersect(origin, dir);
+	var bSpans = this.b.intersect(origin, dir);
+	var retval = [];
+	var aIndex = 0, bIndex = 0;
+	while(aIndex < aSpans.length && bIndex < bSpans.length)
+	{		
+		if(aSpans[aIndex].end < bSpans[bIndex].start) // if a is completely before b
+		{
+			retval.push(aSpans[aIndex++]);
+			continue;
+		}
+		if(bSpans[bIndex].end < aSpans[aIndex].start) // if b is completely before a
+		{
+			retval.push(bSpans[bIndex++]);
+			continue;
+		}
+		var start = Math.max(aSpans[aIndex].start, bSpans[bIndex].start);
+		var end = Math.min(aSpans[aIndex].end, bSpans[bIndex].end);
+		retval.push(new Span(start, end));
+		if(aSpans[aIndex].end < bSpans[bIndex].end)
+			aIndex++;
+		else
+			bIndex++;
+	}
+	return retval;
+},
+getMaterial:function(p)
+{
+	if(Math.abs(this.a.getDistanceFromSurface(p)) > Math.abs(this.b.getDistanceFromSurface(p)))
+		return this.b.getMaterial(p);
+	return this.a.getMaterial(p);
+},
+getNormal:function(p)
+{
+	if(Math.abs(this.a.getDistanceFromSurface(p)) > Math.abs(this.b.getDistanceFromSurface(p)))
+		return this.b.getNormal(p);
+	return this.a.getNormal(p);
+},
+getDistanceFromSurface:function(p)
+{
+	var aDist = this.a.getDistanceFromSurface(p);
+	var bDist = this.b.getDistanceFromSurface(p);
+	if(Math.abs(aDist) > Math.abs(bDist))
+		return bDist;
+	return aDist;
+},
+};
+
+function Difference(a, b)
+{
+	this.a = a;
+	this.b = b;
+}
+
+Difference.prototype = {
+intersect:function(origin, dir)
+{
+	var aSpans = this.a.intersect(origin, dir);
+	var bSpans = this.b.intersect(origin, dir);
+	var retval = [];
+	var aIndex = 0, bIndex = 0;
+	while(aIndex < aSpans.length && bIndex < bSpans.length)
+	{		
+		if(aSpans[aIndex].end < bSpans[bIndex].start) // if a is completely before b
+		{
+			retval.push(aSpans[aIndex++]);
+			continue;
+		}
+		if(bSpans[bIndex].end < aSpans[aIndex].start) // if b is completely before a
+		{
+			bIndex++;
+			continue;
+		}
+		var a = aSpans[aIndex];
+		var b = bSpans[bIndex];
+		if(a.start < b.start)
+		{
+			if(a.end > b.end)
+			{
+				retval.push(new Span(a.start, b.start));
+				a.start = b.end;
+				bIndex++;
+			}
+			else // a.end <= b.end
+			{
+				a.end = b.start;
+				retval.push(a);
+				aIndex++;
+			}
+		}
+		else // a.start >= b.start
+		{
+			if(a.end > b.end)
+			{
+				a.start = b.end;
+				bIndex++;
+			}
+			else // a.end <= b.end
+			{
+				aIndex++;
+			}
+		}
+	}
+	while(aIndex < aSpans.length)
+	{
+		retval.push(aSpans[aIndex++]);
+	}
+	return retval;
+},
+getMaterial:function(p)
+{
+	if(Math.abs(this.a.getDistanceFromSurface(p)) > Math.abs(this.b.getDistanceFromSurface(p)))
+		return this.b.getMaterial(p);
+	return this.a.getMaterial(p);
+},
+getNormal:function(p)
+{
+	if(Math.abs(this.a.getDistanceFromSurface(p)) > Math.abs(this.b.getDistanceFromSurface(p)))
+		return new Vector(this.b.getNormal(p)).mul(-1);
+	return this.a.getNormal(p);
+},
+getDistanceFromSurface:function(p)
+{
+	var aDist = this.a.getDistanceFromSurface(p);
+	var bDist = this.b.getDistanceFromSurface(p);
+	if(aDist < 0)
+		return -bDist;
+	return aDist;
+},
+};
+
+function getBackground(dir)
+{
+	return new Color(0, 0, 0);
+	var scale = 20;
+	return new Color(Math.sin(scale * dir.x) * 0.5 + 0.5,Math.sin(scale*dir.y)*0.5+0.5,Math.sin(scale*dir.z)*0.5+0.5);
+}
+
+var maxNestLevel = 5;
+
+function getRayColor(world, lights, origin, dir, nestLevel)
+{
+	var spans = world.intersect(origin, dir), i, t = -1, normal, p;
+	for(i=0;i<spans.length;i++)
+	{
+		if(spans[i].start >= eps && spans[i].start < maxDist)
+		{
+			t=spans[i].start;
+			p=new Vector(dir).mul(t).add(origin);
+			normal=world.getNormal(p);
+			break;
+		}
+		else if(spans[i].end >= eps && spans[i].end < maxDist)
+		{
+			t=spans[i].end;
+			p=new Vector(dir).mul(t).add(origin);
+			normal=new Vector(world.getNormal(p)).mul(-1);
+			break;
+		}
+	}
+	if(t == -1)
+		return getBackground(dir);
+	var m=world.getMaterial(p);
+	var color=new Color(m.ambient);
+	for(i=0;i<lights.length;i++)
+	{
+		color.add(lights[i].getLightColor(world, p, dir, normal, m));
+	}
+	if(nestLevel < maxNestLevel && (m.reflection.r > 0 || m.reflection.g > 0 || m.reflection.b > 0))
+	{
+		var newDir = new Vector(dir).reflect(normal).normalize();
+		color.add(new Color(getRayColor(world, lights, p, newDir, nestLevel + 1)).mul(m.reflection));
+	}
+	return color;
+}
+
+function getPixelColor(x, y, world, lights)
+{
+	var fx = 2*x/(c.width-1)-1, fy=1-2*(y)/(c.height-1);
+	if(c.width > c.height)
+		fx *= c.width / c.height;
+	else
+		fy *= c.height / c.width;
+	var dir=new Vector(fx, fy, -1);
+	var r=dir.abs();
+	dir.div(r);
+	return getRayColor(world, lights, new Vector(0, 0, 0), dir, 0);
+}
+
+var minColorDifference = 0.005;
+var c, ctx, imgData, inc = 8, pixelSize = 256, x, y, world, lights;
+var superSampleLevel = 1;
+
+function interpolateColor(x, y, tl, bl, tr, br)
+{
+	var nx = 1-x, ny=1-y;
+	var l = new Color(tl.r*ny+bl.r*y, tl.g*ny+bl.g*y, tl.b*ny+bl.b*y);
+	var r = new Color(tr.r*ny+br.r*y, tr.g*ny+br.g*y, tr.b*ny+br.b*y);
+	return l.scale(nx).add(r.scale(x));
+}
+
+function drawSquareH(x, y, world, lights, size, tl, bl, tr, br)
+{
+	var differenceTooBig = false;
+	differenceTooBig = differenceTooBig || tl.difference(bl) > minColorDifference;
+	differenceTooBig = differenceTooBig || tr.difference(br) > minColorDifference;
+	differenceTooBig = differenceTooBig || tl.difference(tr) > minColorDifference;
+	differenceTooBig = differenceTooBig || bl.difference(br) > minColorDifference;
+	differenceTooBig = differenceTooBig || tl.difference(br) > minColorDifference;
+	differenceTooBig = differenceTooBig || tr.difference(bl) > minColorDifference;
+	if(size <= Math.max(1, 1 / superSampleLevel) || !differenceTooBig)
+	{
+		var dx, dy;
+		var step = 1;
+		if(false) step = size;
+		for(dx=0;dx<size;dx+=step)
+		{
+			for(dy=0;dy<size;dy+=step)
+			{
+				var color;
+				if(false)
+					color = tl;
+				else
+					color = interpolateColor(dx/size, dy/size, tl, bl, tr, br);
+				color.writeToImageData(x+dx, y+dy, imgData);
+			}
+		}
+		return;
+	}
+	var halfSize = size / 2;
+	var cc = getPixelColor(x + halfSize, y + halfSize, world, lights);
+	var cl = getPixelColor(x, y + halfSize, world, lights);
+	var cr = getPixelColor(x + size, y + halfSize, world, lights);
+	var bc = getPixelColor(x + halfSize, y + size, world, lights);
+	var tc = getPixelColor(x + halfSize, y, world, lights);
+	drawSquareH(x, y, world, lights, halfSize, tl, cl, tc, cc);
+	drawSquareH(x + halfSize, y, world, lights, halfSize, tc, cc, tr, cr);
+	drawSquareH(x, y + halfSize, world, lights, halfSize, cl, bl, cc, bc);
+	drawSquareH(x + halfSize, y + halfSize, world, lights, halfSize, cc, bc, cr, br);
+}
+
+function drawSquare(x, y, world, lights)
+{
+	drawSquareH(x, y, world, lights, pixelSize, getPixelColor(x, y, world, lights), getPixelColor(x, y + pixelSize, world, lights), getPixelColor(x + pixelSize, y, world, lights), getPixelColor(x+pixelSize, y+pixelSize, world, lights));
+}
+
+var visibleContext, visibleCanvas;
+
+function onUpdate()
+{
+	ctx.putImageData(imgData, 0, 0);
+	if(superSampleLevel > 1)
+	{
+		visibleContext.drawImage(c, 0, 0, visibleCanvas.width, visibleCanvas.height);
+	}
+}
+
+function main()
+{
+	c = document.getElementById('c');
+	var width=window.innerWidth || document.documentElement.clientWidth || document.body.clientWidth;
+	var height=window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight;
+	c.width=width;
+	c.height=height;
+	if(superSampleLevel > 1)
+	{
+		visibleCanvas = c;
+		c = document.getElementById('cHidden');
+		width *= superSampleLevel;
+		height *= superSampleLevel;
+		c.width=width;
+		c.height=height;
+		visibleContext = visibleCanvas.getContext('2d');
+	}
+	ctx = c.getContext("2d");
+	ctx.fillStyle="#FFF";
+	ctx.fillRect(0, 0, c.width, c.height);
+	imgData = ctx.getImageData(0, 0, width, height);
+	var plasticMat = new Material(new Color(0, 0, 0), new Color(0.6, 0.6, 0.6), new Color(0, 0, 0), 200, new Color(0, 0, 0));
+	var mirrorMat = new Material(new Color(0.0, 0.0, 0.0), new Color(0.1, 0.1, 0.1), new Color(1, 1, 1), 100, new Color(0.6, 0.6, 0.6));
+	world = new Union(new Plane(new Vector(0, 1.2, 1), -1000, plasticMat), new Difference(new Sphere(new Vector(0, 0, -10), 5, mirrorMat), new Sphere(new Vector(-1, 0, -9), 5, mirrorMat)));
+	lights = [
+		new PointLight(new Vector(Math.cos(0 * 2 * Math.PI / 3) * 300, Math.sin(0 * 2 * Math.PI / 3) * 300, 0), new Color(90000, 0, 0)), 
+		new PointLight(new Vector(Math.cos(1 * 2 * Math.PI / 3) * 300, Math.sin(1 * 2 * Math.PI / 3) * 300, 0), new Color(0, 90000, 0)), 
+		new PointLight(new Vector(Math.cos(2 * 2 * Math.PI / 3) * 300, Math.sin(2 * 2 * Math.PI / 3) * 300, 0), new Color(0, 0, 90000)),
+		new DirectionalLight(new Vector(0, -1, 0), new Color(0.2, 0.2, 0.2))];
+	
+	x = 0;
+	y = 0;
+	drawNextLine();
+}
+
+function drawNextLine()
+{	
+	var i;
+	for(i=0;i<inc;i++)
+	{		
+		drawSquare(x, y, world, lights);
+		x += pixelSize;
+		if(x >= c.width)
+		{
+			x = 0;
+			y += pixelSize;
+			if(y >= c.height)
+			{
+				onUpdate();
+				return;
+			}
+		}
+	}
+	onUpdate();
+	window.setTimeout("drawNextLine()", 0);
+}
+//-->
+</script>
+</head>
+<body onload="main()">
+<canvas id="c" width="256" height="256">Canvas is not supported.</canvas>
+<canvas id="cHidden" width="256" height="256" style="display:none"></canvas>
+</body>
+</html>
